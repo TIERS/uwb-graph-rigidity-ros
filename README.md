@@ -1,4 +1,4 @@
-# Graph Rigidity with UWB randing
+# Graph Rigidity with UWB ranging
 
 ROS Nodes for collaborative localization and graph rigidity based on UWB ranging.
 
@@ -36,3 +36,10 @@ We use PCL to extract the UAV positions from ground robots. Install
 ```
 sudo apt install ros-melodic-pcl-ros ros-melodic-pcl-msgs ros-melodic-pcl-conversions
 ```
+## Usage
+
+TODO
+
+## Contact
+
+TODO
