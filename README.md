@@ -34,7 +34,8 @@ catkin build
 
 We use PCL to extract the UAV positions from ground robots. Install
 ```
-sudo apt install ros-melodic-pcl-ros ros-melodic-pcl-msgs ros-melodic-pcl-conversions
+sudo apt install ros-melodic-pcl-ros ros-melodic-pcl-msgs ros-melodic-pcl-conversions libpcl-dev
+
 ```
 ## Usage
 
