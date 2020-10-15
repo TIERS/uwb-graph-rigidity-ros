@@ -11,8 +11,12 @@
 #include <iostream>
 
 #include "ros/ros.h"
+
 #include "std_msgs/String.h"
+
 #include "sensor_msgs/Range.h"
+#include "sensor_msgs/PointCloud2.h"
+
 #include "geometry_msgs/Point.h"
 #include "geometry_msgs/PoseStamped.h"
 
@@ -24,9 +28,8 @@
 
 #include <pcl_ros/transforms.h>
 #include <pcl_ros/point_cloud.h>
+
 #include <pcl_conversions/pcl_conversions.h>
-
-
 
 
 class DroneFinder
@@ -64,10 +67,10 @@ class DroneFinder
     public:
 
         // Constructor
-        Drone_Finder();
+        DroneFinder();
 
         // Cloud to be published
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
+        pcl::PointCloud<pcl::PointXYZ>::Ptr lidar_cloud;
 
         // Callbacks and other methods
         void lidar_pointcloud_cb(const boost::shared_ptr<const sensor_msgs::PointCloud2>& input);
@@ -76,37 +79,42 @@ class DroneFinder
         void kdtree_search();
 };
 
-Drone_Finder::Drone_Finder(void) {
+DroneFinder::DroneFinder(void) {
     /*
     * Constructor
     * 
+    * Creates subscribers and publishers
     * */
-    cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
+    this->lidar_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
 
-    cloud_sub = n.subscribe("/lslidar_point_cloud", 1000, &PCL_conv::cloud_cb, this);
-    uwb_drone_pos_cb = n.subscribe("/dwm1001/tag/drone/position", 1000, &PCL_conv::deca_pos_cb, this);
-    tfmini_sub = n.subscribe("/tfmini_ros_node/TFmini", 1000, &PCL_conv::tfmini_cb, this);
+    cloud_sub = n.subscribe("/lslidar_point_cloud", 1000, &DroneFinder::lidar_pointcloud_cb, this);
+    uwb_pos_sub = n.subscribe("/dwm1001/tag/drone/position", 1000, &DroneFinder::uwb_pos_cb, this);
+    tfmini_sub = n.subscribe("/tfmini_ros_node/TFmini", 1000, &DroneFinder::tfmini_cb, this);
 
-    utuTIERS_drone_cloud_pub = n.advertise<pcl::PointCloud<pcl::PointXYZ> > ("utuTIERS_drone_points", 1000);
-    deca_drone_cloud_pub = n.advertise<pcl::PointCloud<pcl::PointXYZ> > ("deca_drone_points", 1000);
+    drone_cloud_pub = n.advertise<pcl::PointCloud<pcl::PointXYZ> > ("drone_cloud", 1000);
     aux_cloud_pub = n.advertise<pcl::PointCloud<pcl::PointXYZ> > ("aux_drone_points", 1000);
-    meanpoint_pub = n.advertise<geometry_msgs::Point> ("lidar_mean_point", 1000);
+    meanpoint_pub = n.advertise<geometry_msgs::Point> ("lidar_mean_pos", 1000);
 }
 
 
-void PCL_conv::uwb_drone_pos_cb(geometry_msgs::Pose pose)
+void DroneFinder::uwb_pos_cb(geometry_msgs::Pose pose)
 {
     /*
-    * Store UWB position 
+    * Store UWB position  and combine with lidar information
     */
+
+    // Safe pose
     this->drone_pose = pose;
-    this->drone_pose.position.z = this->z_pos_drone - 0.8; //substract the z position of the reference (3d lidar) to the lidar1D measurement 
-    this-> = true;
+    this->received_uwb = true;
+
+    // Add 1D lidar height removing 3D lidar z
+    this->drone_pose.position.z = this->drone_z - this->lidar_z;
+    
 }
 
 
 
-void PCL_conv::tfmini_cb(sensor_msgs::Range msg)
+void DroneFinder::tfmini_cb(sensor_msgs::Range msg)
 {
     /*
     * Store TFmini range in internal attribute
@@ -115,14 +123,21 @@ void PCL_conv::tfmini_cb(sensor_msgs::Range msg)
 }
 
 
-/*CALLBACK TO CONVERT LIDAR DATA TO POINT CLOUD*/
-void PCL_conv::lidar_pointcloud_cb(const boost::shared_ptr<const sensor_msgs::PointCloud2>& input){ //convert msgs pointcloud2 to pcl cloud
+void DroneFinder::lidar_pointcloud_cb(const boost::shared_ptr<const sensor_msgs::PointCloud2>& input_cloud)
+{ 
+    /*
+    * Lidar point cloud callback
+    * 
+    * Converts PointCloud2 to PCL PointCloud<PointXYZ>
+    * Calls this.kdtree_search() afterwards
+    * 
+    */
 
     pcl::PCLPointCloud2 pcl_pc2;
-    pcl_conversions::toPCL(*input,pcl_pc2);
-    pcl::fromPCLPointCloud2(pcl_pc2,*cloud);
+    pcl_conversions::toPCL(*input_cloud,pcl_pc2);
+    pcl::fromPCLPointCloud2(pcl_pc2,*this->lidar_cloud);
 
-    kdtree_search();
+    this->kdtree_search();
 }
 
  
@@ -131,127 +146,112 @@ void DroneFinder::kdtree_search()
     /*
     * Initializes a kdTree for searching the point cloud near the UWB location
     * 
-    * Searches at fixed intervals and 
+    * Searches at fixed angular intervals using the UWB and height lidar ranging information
     * 
     * */
 
     pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
 
-    kdtree.setInputCloud (cloud);
+    kdtree.setInputCloud (this->lidar_cloud);
 
     pcl::PointXYZ searchPoint;
   
-  meanPoint.x = 0.0;
-  meanPoint.y = 0.0;
-  meanPoint.z = 0.0;
+    meanPoint.x = 0.0;
+    meanPoint.y = 0.0;
+    meanPoint.z = 0.0;
 
-  searchPoint.x = drone_pose.position.x;//1.23f;
-  searchPoint.y = drone_pose.position.y;//5.85f;
-  searchPoint.z = drone_pose.position.z;//-0.52f;
+    searchPoint.x = drone_pose.position.x;
+    searchPoint.y = drone_pose.position.y;
+    searchPoint.z = drone_pose.position.z;
 
-  // K nearest neighbor search
+    // K nearest neighbor search
 
-  int K = 1;
+    int K = 1;
 
-  std::vector<int> pointIdxNKNSearch(K);
-  std::vector<float> pointNKNSquaredDistance(K);
+    std::vector<int> pointIdxNKNSearch(K);
+    std::vector<float> pointNKNSquaredDistance(K);
 
-  std::cout << "K nearest neighbor search at (" << searchPoint.x 
+    std::cout << "K nearest neighbor search at (" << searchPoint.x 
             << " " << searchPoint.y 
             << " " << searchPoint.z
             << ") with K=" << K << std::endl;
 
-  if ( kdtree.nearestKSearch (searchPoint, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0 )
-  {
-    for (std::size_t i = 0; i < pointIdxNKNSearch.size (); ++i)
-      std::cout << "    "  <<   (*cloud)[ pointIdxNKNSearch[i] ].x 
-                << " " << (*cloud)[ pointIdxNKNSearch[i] ].y 
-                << " " << (*cloud)[ pointIdxNKNSearch[i] ].z 
-                << " (squared distance: " << pointNKNSquaredDistance[i] << ")" << std::endl;
-  }
-
- searchPoint.x = (*cloud)[ pointIdxNKNSearch[0] ].x  ;
- searchPoint.y = (*cloud)[ pointIdxNKNSearch[0] ].y  ;
- searchPoint.z = (*cloud)[ pointIdxNKNSearch[0] ].z  ;
-  // Neighbors within radius search
-
-  std::vector<int> pointIdxRadiusSearch;
-  std::vector<float> pointRadiusSquaredDistance;
-
-  float radius = 0.3f;
-
-  
-  // create point cloud object
-  pcl::PointCloud<pcl::PointXYZ>::Ptr droneCloud (new pcl::PointCloud<pcl::PointXYZ>);
-  droneCloud->header.frame_id = "laser_link";
-
-
-  if ( kdtree.radiusSearch (searchPoint, radius, pointIdxRadiusSearch, pointRadiusSquaredDistance) > 0 )
-  {
-    for (std::size_t i = 0; i < pointIdxRadiusSearch.size (); ++i)
+    if ( kdtree.nearestKSearch (searchPoint, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0 )
     {
-     
-      pcl::PointXYZ newPoint;
-      newPoint.x = (*cloud)[ pointIdxRadiusSearch[i] ].x ;
-      newPoint.y = (*cloud)[ pointIdxRadiusSearch[i] ].y ;
-      newPoint.z = (*cloud)[ pointIdxRadiusSearch[i] ].z ;
-      droneCloud->points.push_back(newPoint);
-
-      meanPoint.x += newPoint.x;
-      meanPoint.y += newPoint.y;
-      meanPoint.z += newPoint.z;
-
-        
+        for (std::size_t i = 0; i < pointIdxNKNSearch.size (); ++i)
+        {
+            std::cout << "    "  <<   (*this->lidar_cloud)[ pointIdxNKNSearch[i] ].x 
+                << " " << (*this->lidar_cloud)[ pointIdxNKNSearch[i] ].y 
+                << " " << (*this->lidar_cloud)[ pointIdxNKNSearch[i] ].z 
+                << " (squared distance: " << pointNKNSquaredDistance[i] << ")" << std::endl;
+        }
     }
 
-    //calculate mean point to take it as the lidar's estimation
-    meanPoint.x = meanPoint.x/pointIdxRadiusSearch.size();
-    meanPoint.y = meanPoint.y/pointIdxRadiusSearch.size();
-    meanPoint.z = meanPoint.z/pointIdxRadiusSearch.size();
+    searchPoint.x = (*this->lidar_cloud)[ pointIdxNKNSearch[0] ].x;
+    searchPoint.y = (*this->lidar_cloud)[ pointIdxNKNSearch[0] ].y;
+    searchPoint.z = (*this->lidar_cloud)[ pointIdxNKNSearch[0] ].z;
 
-    
-    
-    // publish point cloud
-    if(droneCloud->size() > 0 ) {
-      ros::Time time_st = ros::Time::now ();
+    // Neighbors within radius search
+    std::vector<int> pointIdxRadiusSearch;
+    std::vector<float> pointRadiusSquaredDistance;
 
-      droneCloud->header.stamp= time_st.toNSec()/1e3;
+    float radius = 0.3f;
 
-      
-      if(received_utuTIERS){
-        utuTIERS_drone_cloud_pub.publish (droneCloud);
-        received_utuTIERS = false;
-      }
-        
-      else if(received_deca){
-        deca_drone_cloud_pub.publish (droneCloud);
-        received_deca = false;
-      }
-      meanpoint_pub.publish(meanPoint);
+
+    // create point cloud object
+    pcl::PointCloud<pcl::PointXYZ>::Ptr droneCloud (new pcl::PointCloud<pcl::PointXYZ>);
+    droneCloud->header.frame_id = "laser_link";
+
+
+    if ( kdtree.radiusSearch (searchPoint, radius, pointIdxRadiusSearch, pointRadiusSquaredDistance) > 0 )
+    {
+        for (std::size_t i = 0; i < pointIdxRadiusSearch.size (); ++i)
+        {
+            
+            pcl::PointXYZ newPoint;
+            newPoint.x = (*this->lidar_cloud)[ pointIdxRadiusSearch[i] ].x ;
+            newPoint.y = (*this->lidar_cloud)[ pointIdxRadiusSearch[i] ].y ;
+            newPoint.z = (*this->lidar_cloud)[ pointIdxRadiusSearch[i] ].z ;
+            droneCloud->points.push_back(newPoint);
+
+            meanPoint.x += newPoint.x;
+            meanPoint.y += newPoint.y;
+            meanPoint.z += newPoint.z;
+
+        }
+
+        //calculate mean point to take it as the lidar's estimation
+        meanPoint.x = meanPoint.x/pointIdxRadiusSearch.size();
+        meanPoint.y = meanPoint.y/pointIdxRadiusSearch.size();
+        meanPoint.z = meanPoint.z/pointIdxRadiusSearch.size();
+
+        // publish point cloud
+        if(droneCloud->size() > 0 ) {
+            ros::Time time_st = ros::Time::now ();
+
+            droneCloud->header.stamp= time_st.toNSec()/1e3;
+            
+            if(this->received_uwb){
+                drone_cloud_pub.publish (droneCloud);
+                this->received_uwb = false;
+            }
+
+            meanpoint_pub.publish(meanPoint);
+        }
+
     }
-  
-  }
 
 }
 
 int main(int argc, char **argv)
 {
-    // *
-    // * The ros::init() function needs to see argc and argv so that it can perform
-    // * any ROS arguments and name remapping that were provided at the command line.
-    // * For programmatic remappings you can use a different version of init() which takes
-    // * remappings directly, but for most command-line programs, passing argc and argv is
-    // * the easiest way to do it.  The third argument to init() is the name of the node.
-    // *
-    // * You must call one of the versions of ros::init() before using any other
-    // * part of the ROS system.
-    
 
-    ros::init(argc, argv, "pcl_conver");
+    ros::init(argc, argv, "drone_finder");  // Initialize ROS Node
 
-    PCL_conv pcl_conver;
+    DroneFinder drone_finder;               // Create object, initialize callbacks
     
-    ros::spin();
+    ros::spin();                            // Spin forever
 
     return 0;
+
 }
