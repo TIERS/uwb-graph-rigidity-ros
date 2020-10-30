@@ -41,6 +41,9 @@ sudo apt install ros-melodic-pcl-ros ros-melodic-pcl-msgs ros-melodic-pcl-conver
 
 TODO
 
+
 ## Contact
 
-TODO
+For any questions, write to `jopequ@utu.fi`.
+
+Visit us at [https://tiers.utu.fi](https://tiers.utu.fi)
