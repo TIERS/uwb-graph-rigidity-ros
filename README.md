@@ -6,7 +6,8 @@ This code has been used for collaborative localization between UGVs and UAVs und
 - UWB ranging is possible between any pair of robots (default topics are `/uwb/ranging/{{ robot_one_hostname }}/{{ robot_two_hostname }}`).
 - If not all UWB transceivers are on the same horizontal plane, then the relative altitude is also available (by default measured with TFmini lidar and available on topic `/{{ robot_hostname }}/tfmini_ros_node/range`).
 - Ground robots are equipped with 3D lidars and able to rotate and detect the UAVs (by default lidar data is published to topic `\{{ robot_hostname }}/lslidar/scan`)
-- Robots share a common global orientation frame (e.g., from a magnetometer)
+- Ground robots with limited-FoV Livox lidars publish `\{{ robot_hostname }}/livox/lidar)
+- Robots share a common global orientation frame (e.g., from a magnetometer). In practice this can be achieved by initializing all robots with the VIO camera looking in the same direction.
 
 ## Installation
 
@@ -35,8 +36,8 @@ catkin build
 We use PCL to extract the UAV positions from ground robots. Install
 ```
 sudo apt install ros-melodic-pcl-ros ros-melodic-pcl-msgs ros-melodic-pcl-conversions libpcl-dev
-
 ```
+
 ## Usage
 
 TODO
